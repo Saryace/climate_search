@@ -1,0 +1,20 @@
+.Rproj.user
+.Rhistory
+.RData
+.Ruserdata
+
+# Raw data (may contain large files)
+data/raw/*.txt
+data/raw/*.csv
+
+# Keep processed outputs in git
+!data/processed/.gitkeep
+!output/.gitkeep
+
+# Logs
+logs/
+*.log
+.Rdata
+.httr-oauth
+.DS_Store
+.quarto

@@ -1,0 +1,6 @@
+source_db,query_language,n_raw
+OpenAlex,english,661
+OpenAlex,portuguese,17
+OpenAlex,spanish,77
+Scopus,english,1243
+WoS,english,845
