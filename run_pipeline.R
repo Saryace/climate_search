@@ -1,68 +1,54 @@
 # =============================================================================
 # run_pipeline.R
 #
-# Master script — runs the full search workflow in order.
+# Script maestro que ejecuta todas las búsquedas
+# Descarga desde las 3 bases por API y eliminina duplicados por DOI
 #
-# BEFORE RUNNING
-# ──────────────
-# 1. Add API keys to ~/.Renviron (usethis::edit_r_environ()):
-#      WOS_STARTER_KEY="your_wos_key"      # developer.clarivate.com
-#      Elsevier_API="your_scopus_key"      # dev.elsevier.com (institution IP/VPN)
+# ANTES DE EJECUTAR
 #
-# 2. Choose ONE script per database — API retrieval OR manual import:
+# 1. Instala los paquetes:
+#      source("PACKAGES.R")
 #
-#      WoS:    02_retrieve_wos.R   (API)   OR  02b_import_wos.R   (manual .txt)
-#      Scopus: 03_retrieve_scopus.R (API)  OR  03b_import_scopus.R (manual .csv)
+# 2. Agrega las claves API a ~/.Renviron (usethis::edit_r_environ()):
+#      WOS_STARTER_KEY="tu_clave_wos"      # developer.clarivate.com
+#      Elsevier_API="tu_clave_scopus"      # dev.elsevier.com (IP/VPN institucional)
+#    Reiniciar R después de guardar.
 #
-#    Comment out the one you are NOT using below.
-#    Both write to the same output file so steps 04–07 are unaffected.
+# 3. Configura el correo de OpenAlex en R/01_retrieve_openalex.R:
+#      options(openalexR.mailto = "tu@correo.com")
 #
-# WORKFLOW
-# ─────────────────────────────────────────────────────────────────────────────
-# Step 01 │ OpenAlex  — API (openalexR, free, set email in script)
-# Step 02 │ WoS       — API (rwosstarter) OR manual ISI .txt import
-# Step 03 │ Scopus    — API (rscopus, institution IP) OR manual CSV import
-# Step 04 │ Merge & deduplicate — DOI exact match only
-# Step 05 │ Tag document types  — review / research_paper / other
-# Step 06 │ Screen              — country + concept keyword filter
-# Step 07 │ Report              — PRISMA counts, distributions
+# PASOS
+# Paso 01 │ OpenAlex (openalexR, gratis, requiere email)
+# Paso 02 │ WoS API (rwosstarter, requiere WOS_STARTER_KEY)
+# Paso 03 │ Scopus API (rscopus, requiere Elsevier_API + IP institucional)
+# Paso 04 │ Unir y deduplicar — coincidencia exacta por DOI
 # =============================================================================
 
 library(cli)
 
-cli_h1("Climate Search Pipeline")
-cli_alert_info("Start time: {Sys.time()}")
+cli_h1("Pipeline de búsqueda — Climate Search")
+cli_alert_info("Inicio: {Sys.time()}")
 
-steps <- list(
-  list(script = "R/01_retrieve_openalex.R",  label = "01 OpenAlex retrieval"),
-
-  # ── WoS: choose API or import (comment out the other) ──────────────────────
-  # list(script = "R/02_retrieve_wos.R",       label = "02 WoS — API"),
-   list(script = "R/02b_import_wos.R",      label = "02 WoS — manual import"),
-
-  # ── Scopus: choose API or import (comment out the other) ───────────────────
-  # list(script = "R/03_retrieve_scopus.R",    label = "03 Scopus — API"),
-   list(script = "R/03b_import_scopus.R",   label = "03 Scopus — manual import"),
-
-  list(script = "R/04_merge_and_dedup.R",    label = "04 Merge & deduplication"),
-  list(script = "R/05_tag_doctype.R",        label = "05 Document type tagging"),
-  list(script = "R/06_screen.R",             label = "06 Screening"),
-  list(script = "R/07_report.R",             label = "07 Report")
+pasos <- list(
+  list(script = "R/01_retrieve_openalex.R", etiqueta = "01 OpenAlex descarga"),
+  list(script = "R/02_retrieve_wos.R",      etiqueta = "02 WoS descarga (API)"),
+  list(script = "R/03_retrieve_scopus.R",   etiqueta = "03 Scopus descarga (API)"),
+  list(script = "R/04_merge_and_dedup.R",   etiqueta = "04 Unión y deduplicación")
 )
 
-for (step in steps) {
-  cli_h2(step$label)
+for (paso in pasos) {
+  cli_h2(paso$etiqueta)
   tryCatch(
-    source(step$script, local = FALSE),
+    source(paso$script, local = FALSE),
     error = function(e) {
-      cli_alert_danger("FAILED: {step$label} — {e$message}")
+      cli_alert_danger("FALLÓ: {paso$etiqueta} — {e$message}")
       stop(e)
     }
   )
-  cli_alert_success("{step$label} — done")
+  cli_alert_success("{paso$etiqueta} — listo")
 }
 
-cli_h1("Pipeline complete")
-cli_alert_info("End time: {Sys.time()}")
-cli_alert_success("Screened set:  output/screened/screened_pass_strict.csv")
-cli_alert_success("PRISMA counts: output/prisma_flow.csv")
+cli_h1("Pipeline completo")
+cli_alert_info("Fin: {Sys.time()}")
+cli_alert_success("Registros crudos:   data/raw/*_raw.csv")
+cli_alert_success("Registros únicos:   data/processed/unique_records.csv")
