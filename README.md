@@ -33,10 +33,6 @@ climate_search/
     └── processed/            ← registros únicos tras deduplicar
 ```
 
-> **Nota:** el archivo del paso 4 está en el repo como `04_merge_and_dupl.R`,
-> pero `run_pipeline.R` lo llama como `04_merge_and_dedup.R`. Renombra el archivo
-> a `04_merge_and_dedup.R` (o ajusta la referencia) para que el pipeline corra.
-
 ---
 
 ## Cómo se construyen las consultas (lo importante)
@@ -54,7 +50,7 @@ vez en `R/queries.R`:
 La lógica es **idéntica** en las tres bases:
 
 ```
-(clima) AND (adaptación) AND (urbano) AND (países)
+(cambio climatico) AND (adaptación) AND (urbano) AND (países)
 ```
 
 Dentro de cada lista los términos se unen con **OR**; las cuatro listas se unen
@@ -81,8 +77,6 @@ consultas de las tres bases se regeneran solas.
    reemplaza `adapt*` por variantes explícitas en cada idioma.
 
 ---
-
-## Quick start
 
 ### 1. Instalar paquetes
 
@@ -153,5 +147,5 @@ Coincidencia **exacta por DOI** (en minúsculas, con espacios recortados):
 
 ---
 
-*Estrategia basada en Cortés & Quiroga (2023).*
+*Estrategia basada en [Cortés & Quiroga (2023)](http://www.doi.org/10.3389/fcomm.2023.1226432)*
 *Última actualización: junio 2026.*
