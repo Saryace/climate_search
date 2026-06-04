@@ -66,9 +66,8 @@ col_or_na <- function(df, name, na = NA_character_) {
 
 
 # ── Años ──────────────────────────────────────────────────────────────────────
-# Ventana temporal de la búsqueda (inclusiva). Definirla acá evita que las
-# consultas de WoS/Scopus fallen al cargar queries.R por
-# "object 'YEAR_FROM' not found".
+# Ventana temporal de la búsqueda (inclusiva)
+
 YEAR_FROM <- 2021L
 YEAR_TO   <- 2025L
 
@@ -191,7 +190,8 @@ urban_pt <- c(
 
 # ── Consulta Booleana: OpenAlex ─────────────────────────────────────────────────
 # (clima) AND (adaptación) AND (urbano) AND (países).
-# El año NO va en esta cadena: se pasa como filtro en oa_fetch() (ver 01).
+# El año NO va en esta cadena: se pasa como filtro en oa_fetch()
+
 oa_queries <- list(
   english = all_of(
     concept_block(climate_en),
@@ -256,8 +256,3 @@ scopus_queries <- list(
   portuguese = build_scopus_query(climate_pt, adaptation_pt, urban_pt, countries_pt)
 )
 
-
-# Verificación rápida — descomenta para imprimir una consulta en consola:
-# cat(oa_queries$english,     "\n")
-# cat(wos_queries$english,    "\n")
-# cat(scopus_queries$english, "\n")
