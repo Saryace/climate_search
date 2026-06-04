@@ -5,9 +5,6 @@ contextos urbanos de Centro y Sudamérica**, 2021–2025.
 
 > Esta parte del repositorio cubre **solo la búsqueda y consolidación de
 > registros crudos**: descarga desde las tres bases + deduplicación por DOI.
-> El análisis posterior (clasificación de tipo de documento, screening por
-> país/concepto, conteos PRISMA) es una etapa separada que no se documenta aquí.
-
 - **Bases:** Web of Science, Scopus y OpenAlex
 - **Idiomas:** inglés, español y portugués
 - **Ventana temporal:** 2021–2025
@@ -35,7 +32,7 @@ climate_search/
 
 ---
 
-## Cómo se construyen las consultas (lo importante)
+## Cómo se construyen las búsquedas
 
 Las tres bases comparten **las mismas listas de conceptos**, definidas una sola
 vez en `R/queries.R`:

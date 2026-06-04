@@ -33,7 +33,7 @@ pasos <- list(
   list(script = "R/01_retrieve_openalex.R", etiqueta = "01 OpenAlex descarga"),
   list(script = "R/02_retrieve_wos.R",      etiqueta = "02 WoS descarga (API)"),
   list(script = "R/03_retrieve_scopus.R",   etiqueta = "03 Scopus descarga (API)"),
-  list(script = "R/04_merge_and_dedup.R",   etiqueta = "04 Unión y deduplicación")
+  list(script = "R/04_merge_and_dupl.R",   etiqueta = "04 Unión y deduplicación")
 )
 
 for (paso in pasos) {
