@@ -1,19 +1,27 @@
 # =============================================================================
 # R/01_retrieve_openalex.R
 #
-# Descarga registros de OpenAlex usando UNA consulta por idioma (3 en total).
+# Descarga registros de OpenAlex buscando países en título y resumen,
+# igual que WoS y Scopus — para que los resultados sean comparables.
 #
-# SOLUCIÓN AL ERROR HTTP 400 "Request Line is too large"
-# ───────────────────────────────────────────────────────
-# Los nombres de países en el texto de búsqueda hacen la URL demasiado larga.
-# Solución: los países se pasan como filtro separado usando códigos ISO
-# (authorships.countries) definidos en queries.R — no van en la URL.
+# ESTRATEGIA PARA EVITAR HTTP 400 Y 429
+# ──────────────────────────────────────
+# El problema: una consulta con (clima AND urbano AND 23 países) supera el
+# límite de URL de OpenAlex (~2000 chars codificados) → HTTP 400.
+# La solución: dividir por PAÍS. Cada llamada busca UN país a la vez:
+#
+#   (clima AND urbano) AND "Argentina"  → año 2021 ... 2025
+#   (clima AND urbano) AND "Bolivia"    → año 2021 ... 2025
+#   ...
+#
+# Cada URL mide < 500 chars. Se agregan pausas entre llamadas → sin 429.
+# La deduplicación por DOI al final elimina registros repetidos entre países.
 #
 # AUTENTICACIÓN
 # ─────────────
-# Agrega a ~/.Renviron (usethis::edit_r_environ()) y reinicia R:
+# Agrega a ~/.Renviron y reinicia R:
 #   OPENALEX_EMAIL="tu@email.com"
-#   OPENALEX_API_KEY="tu_clave"
+#   OPENALEX_API_KEY="tu_clave"   # opcional, aumenta límites
 #
 # Salida:   data/raw/openalex_raw.csv
 # Requiere: openalexR, dplyr, readr, fs
@@ -24,17 +32,25 @@ library(dplyr)
 library(readr)
 library(fs)
 
-source("R/queries.R")   # carga: oa_queries, oa_countries_iso, YEAR_FROM, YEAR_TO
+source("R/queries.R")
 
 # ── Configuración ─────────────────────────────────────────────────────────────
 
+# En .Renviron comenta o elimina la línea de la clave:
+# OPENALEX_API_KEY="tu_clave"   # <- comentar esto
+
+# En 01_retrieve_openalex.R cambia:
+MY_APIKEY <- ""   # dejar vacío
+PAUSA_SEG <- 10L  # más pausa para respetar el límite de 10 req/seg
+
+
 MY_EMAIL  <- Sys.getenv("OPENALEX_EMAIL")
-MY_APIKEY <- Sys.getenv("OPENALEX_API_KEY")
+MY_APIKEY <- ""
 
 options(openalexR.mailto = MY_EMAIL)
 
 OUT_FILE  <- "data/raw/openalex_raw.csv"
-PAUSA_SEG <- 2L    # segundos entre fragmentos; aumenta a 5 si persiste el 429
+PAUSA_SEG <- 10L   # segundos entre llamadas — aumenta a 5 si reaparece el 429
 
 FIELDS <- c(
   "id", "doi", "title", "display_name", "publication_year",
@@ -43,56 +59,80 @@ FIELDS <- c(
   "cited_by_count"
 )
 
-# ── Función auxiliar: reintentar N veces ante errores ─────────────────────────
+# ── Construir combinaciones: consulta base × país × año ───────────────────────
+# Cada fila es una llamada a la API — URL corta, sin 400.
 
-intentar <- function(expr, intentos = 3) {
-  for (i in seq_len(intentos)) {
-    resultado <- tryCatch(expr, error = function(e) {
-      message("  Error (intento ", i, "/", intentos, "): ", conditionMessage(e))
-      message("  Esperando ", PAUSA_SEG, " seg antes de reintentar ...")
-      Sys.sleep(PAUSA_SEG)
-      NULL
-    })
-    if (!is.null(resultado)) return(resultado)
-  }
-  message("  Fallaron todos los intentos. Se omite este fragmento.")
-  NULL
-}
+combinaciones <- bind_rows(
+  tidyr::crossing(
+    lang    = "english",
+    base    = oa_queries[["english"]],
+    pais    = countries_en,
+    anio    = YEAR_FROM:YEAR_TO
+  ),
+  tidyr::crossing(
+    lang    = "spanish",
+    base    = oa_queries[["spanish"]],
+    pais    = countries_es,
+    anio    = YEAR_FROM:YEAR_TO
+  ),
+  tidyr::crossing(
+    lang    = "portuguese",
+    base    = oa_queries[["portuguese"]],
+    pais    = countries_pt,
+    anio    = YEAR_FROM:YEAR_TO
+  )
+)
 
-# ── Función: descargar un año de una consulta ─────────────────────────────────
+message("Total de combinaciones a consultar: ", nrow(combinaciones),
+        " (≈ ", round(nrow(combinaciones) * PAUSA_SEG / 60, 1), " min)")
 
-fetch_anio <- function(query, anio, lang) {
-  message("    descargando año ", anio, " ...")
+# ── Función: una llamada (consulta + país + año) ──────────────────────────────
+
+fetch_uno <- function(base, pais, anio, lang) {
+  # Construir consulta corta: (clima AND urbano) AND "País"
+  query <- paste0(base, ' AND "', pais, '"')
+  
   Sys.sleep(PAUSA_SEG)
-  resultado <- intentar(
+  
+  res <- tryCatch(
     oa_fetch(
       entity                    = "works",
       title_and_abstract.search = query,
-      authorships.countries     = oa_countries_iso,   # ISO desde queries.R
       publication_year          = anio,
       options                   = list(select = FIELDS),
       mailto                    = MY_EMAIL,
-      api_key                   = MY_APIKEY,
+      api_key                   = if (nchar(MY_APIKEY) > 0) MY_APIKEY else NULL,
       verbose                   = FALSE
-    )
+    ),
+    error = function(e) {
+      message("  Error [", lang, " | ", pais, " | ", anio, "]: ",
+              conditionMessage(e))
+      NULL
+    }
   )
-  if (is.null(resultado)) return(tibble())
-  resultado |> mutate(query_language = lang, source_db = "OpenAlex")
-}
-
-# ── Función: descargar un idioma completo (dividido por año) ──────────────────
-
-fetch_lang <- function(lang) {
-  message("\nIdioma: ", lang)
-  lapply(YEAR_FROM:YEAR_TO, fetch_anio, query = oa_queries[[lang]], lang = lang) |>
-    bind_rows()
+  
+  if (is.null(res) || nrow(res) == 0) return(tibble())
+  
+  res |> mutate(
+    query_language = lang,
+    source_db      = "OpenAlex",
+    pais_consulta  = pais
+  )
 }
 
 # ── Descarga ──────────────────────────────────────────────────────────────────
 
-all_raw <- lapply(names(oa_queries), fetch_lang) |>
-  bind_rows()
+message("\nIniciando descarga ...")
 
+results_list <- purrr::pmap(
+  combinaciones,
+  function(lang, base, pais, anio) {
+    message("  ", lang, " | ", pais, " | ", anio)
+    fetch_uno(base, pais, anio, lang)
+  }
+)
+
+all_raw <- bind_rows(results_list)
 message("\nRegistros brutos descargados: ", nrow(all_raw))
 
 # ── Normalizar DOI ────────────────────────────────────────────────────────────
@@ -100,7 +140,7 @@ message("\nRegistros brutos descargados: ", nrow(all_raw))
 all_raw <- all_raw |>
   mutate(doi_clean = tolower(trimws(coalesce(doi, NA_character_))))
 
-# ── Deduplicar ────────────────────────────────────────────────────────────────
+# ── Deduplicar (muchos registros aparecen en varios países) ──────────────────
 
 has_doi <- all_raw |> filter(!is.na(doi_clean) & doi_clean != "")
 no_doi  <- all_raw |> filter(is.na(doi_clean)  | doi_clean == "")
@@ -115,180 +155,6 @@ all_dedup <- bind_rows(
 
 message("Tras deduplicación: ", nrow(all_dedup),
         " registros (", nrow(all_raw) - nrow(all_dedup), " eliminados)")
-
-# ── Guardar ───────────────────────────────────────────────────────────────────
-
-dir_create("data/raw")
-write_csv(all_dedup, OUT_FILE)
-message("Guardado en ", OUT_FILE)
-
-cat > /home/claude/climate_search/R/01_retrieve_openalex.R << 'REOF'
-# =============================================================================
-# R/01_retrieve_openalex.R
-#
-# Descarga registros de OpenAlex usando httr2 directamente (POST).
-#
-# POR QUÉ httr2 EN VEZ DE oa_fetch()
-# ────────────────────────────────────
-# oa_fetch() siempre construye peticiones GET. Con consultas largas la URL
-# supera el límite del servidor (~2000 chars) → HTTP 400.
-# Con httr2 enviamos la consulta como POST con body JSON → sin límite de tamaño.
-#
-# AUTENTICACIÓN
-# ─────────────
-# Agrega a ~/.Renviron y reinicia R:
-#   OPENALEX_EMAIL="tu@email.com"
-#   OPENALEX_API_KEY="tu_clave"
-#
-# Salida:   data/raw/openalex_raw.csv
-# Requiere: httr2, jsonlite, dplyr, readr, fs
-# =============================================================================
-
-library(httr2)
-library(jsonlite)
-library(dplyr)
-library(readr)
-library(fs)
-
-source("R/queries.R")
-
-# ── Configuración ─────────────────────────────────────────────────────────────
-
-MY_EMAIL  <- Sys.getenv("OPENALEX_EMAIL")
-MY_APIKEY <- Sys.getenv("OPENALEX_API_KEY")
-
-OUT_FILE  <- "data/raw/openalex_raw.csv"
-PAUSA_SEG <- 2L
-POR_PAGINA <- 200L   # máximo permitido por OpenAlex
-
-FIELDS <- paste(c(
-  "id", "doi", "title", "display_name", "publication_year",
-  "publication_date", "type", "language",
-  "primary_location", "authorships", "abstract_inverted_index",
-  "cited_by_count"
-), collapse = ",")
-
-# ── Función: una página via GET con filtros en query string ───────────────────
-# Los filtros de país y año son cortos — solo la búsqueda de texto es larga.
-# Separamos: texto en el body (POST simulado via cursor) y filtros cortos en URL.
-
-fetch_pagina <- function(query_texto, anio, cursor = "*") {
-  
-  # Construir el filtro: texto de búsqueda + país ISO + año
-  paises <- paste(oa_countries_iso, collapse = "|")
-  
-  filtro <- paste0(
-    "title_and_abstract.search:", query_texto,
-    ",authorships.countries:", paises,
-    ",publication_year:", anio
-  )
-  
-  resp <- request("https://api.openalex.org/works") |>
-    req_url_query(
-      filter     = filtro,
-      select     = FIELDS,
-      per_page   = POR_PAGINA,
-      cursor     = cursor,
-      mailto     = MY_EMAIL,
-      api_key    = if (nchar(MY_APIKEY) > 0) MY_APIKEY else NULL
-    ) |>
-    req_timeout(60) |>
-    req_retry(max_tries = 3, backoff = ~ PAUSA_SEG) |>
-    req_perform()
-  
-  resp_body_json(resp, simplifyVector = FALSE)
-}
-
-# ── Función: todos los registros de un año ────────────────────────────────────
-
-fetch_anio <- function(query, anio, lang) {
-  message("    año ", anio, " ...")
-  Sys.sleep(PAUSA_SEG)
-  
-  # Primera página
-  pagina <- tryCatch(
-    fetch_pagina(query, anio, cursor = "*"),
-    error = function(e) {
-      message("  Error año ", anio, ": ", conditionMessage(e))
-      NULL
-    }
-  )
-  if (is.null(pagina)) return(tibble())
-  
-  total <- pagina$meta$count %||% 0L
-  message("      total: ", total)
-  if (total == 0L) return(tibble())
-  
-  registros <- pagina$results
-  cursor_sig <- pagina$meta$next_cursor
-  
-  # Páginas siguientes
-  while (!is.null(cursor_sig) && length(registros) < total) {
-    Sys.sleep(PAUSA_SEG)
-    pagina <- tryCatch(
-      fetch_pagina(query, anio, cursor = cursor_sig),
-      error = function(e) {
-        message("  Error paginando: ", conditionMessage(e))
-        NULL
-      }
-    )
-    if (is.null(pagina)) break
-    registros <- c(registros, pagina$results)
-    cursor_sig <- pagina$meta$next_cursor
-  }
-  
-  # Convertir lista a tibble
-  tibble(
-    source_db      = "OpenAlex",
-    query_language = lang,
-    id             = map_chr(registros, \(r) r$id          %||% NA_character_),
-    doi            = map_chr(registros, \(r) r$doi         %||% NA_character_),
-    display_name   = map_chr(registros, \(r) r$display_name %||% NA_character_),
-    year           = map_int(registros, \(r) r$publication_year %||% NA_integer_),
-    type           = map_chr(registros, \(r) r$type        %||% NA_character_),
-    language       = map_chr(registros, \(r) r$language    %||% NA_character_),
-    cited_by_count = map_int(registros, \(r) r$cited_by_count %||% NA_integer_)
-  )
-}
-
-`%||%` <- function(x, y) if (is.null(x) || length(x) == 0) y else x
-
-# ── Función: todos los años de un idioma ──────────────────────────────────────
-
-fetch_lang <- function(lang) {
-  message("\nIdioma: ", lang)
-  lapply(YEAR_FROM:YEAR_TO, fetch_anio,
-         query = oa_queries[[lang]], lang = lang) |>
-    bind_rows()
-}
-
-# ── Descarga ──────────────────────────────────────────────────────────────────
-
-all_raw <- lapply(names(oa_queries), fetch_lang) |>
-  bind_rows()
-
-message("\nRegistros brutos: ", nrow(all_raw))
-
-# ── Normalizar DOI ────────────────────────────────────────────────────────────
-
-all_raw <- all_raw |>
-  mutate(doi_clean = tolower(trimws(coalesce(doi, NA_character_))))
-
-# ── Deduplicar ────────────────────────────────────────────────────────────────
-
-has_doi <- all_raw |> filter(!is.na(doi_clean) & doi_clean != "")
-no_doi  <- all_raw |> filter(is.na(doi_clean)  | doi_clean == "")
-
-all_dedup <- bind_rows(
-  has_doi |> arrange(doi_clean) |> distinct(doi_clean, .keep_all = TRUE),
-  no_doi  |>
-    mutate(title_norm = tolower(trimws(coalesce(display_name, "")))) |>
-    distinct(title_norm, .keep_all = TRUE) |>
-    select(-title_norm)
-)
-
-message("Tras deduplicación: ", nrow(all_dedup),
-        " (", nrow(all_raw) - nrow(all_dedup), " eliminados)")
 
 # ── Guardar ───────────────────────────────────────────────────────────────────
 

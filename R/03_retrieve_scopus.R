@@ -29,12 +29,9 @@ source("R/queries.R")
 
 # Configuración años ------------------------------------------------------
 
-YEAR_FROM <- 2021L
-YEAR_TO   <- 2025L
 OUT_FILE  <- "data/raw/scopus_raw.csv"
 MAX_COUNT <- 5000L
 # Api key -----------------------------------------------------------------
-
 
 cli_h1("Scopus API")
 
@@ -53,8 +50,8 @@ fetch_scopus <- function(query, lang_label) {
   cli_alert_info("Query (truncated): {substr(query, 1, 120)}...")
 
   tryCatch({
-    res   <- scopus_search(query = query, max_count = MAX_COUNT,
-                           count = 25L, verbose = FALSE)
+    res <- scopus_search(query = query, max_count = MAX_COUNT,
+                         count = 25L, view = "STANDARD", verbose = FALSE)
     total <- as.integer(res$total_results %||% 0L)
     cli_alert_info("Total: {total}")
 

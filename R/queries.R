@@ -27,7 +27,7 @@
 #   1) Alcance del campo: OpenAlex busca solo en título + resumen; WoS (TS=) y
 #      Scopus (TITLE-ABS-KEY) además incluyen palabras clave.
 #   2) Comodín adapt*: en WoS y Scopus trunca normalmente. OpenAlex aplica
-#      lematización — en la práctica recuperan lo mismo.
+#      lematización, por lo que tiene los términos de adaptación sin *
 # =============================================================================
 
 # ── Años ──────────────────────────────────────────────────────────────────────
@@ -83,12 +83,6 @@ countries_pt <- c(
   "México", "Nicarágua", "Nicaragua", "Panamá"
 )
 
-# Códigos ISO para OpenAlex (filtro authorships.countries — no va en la URL)
-oa_countries_iso <- c(
-  "AR", "BO", "BR", "CL", "CO", "EC", "GY", "PY", "PE",
-  "SR", "UY", "VE", "BZ", "CR", "SV", "GT", "HN", "MX", "NI", "PA"
-)
-
 # ── Listas de conceptos: INGLÉS ───────────────────────────────────────────────
 
 climate_en <- c(
@@ -100,9 +94,11 @@ climate_en <- c(
 
 adaptation_en <- c(
   "adapt*"
-  # , "resilience"        # <- agrega más términos aquí si es necesario
+  # , "resilience"        # <- agrega más términos aquí si es necesario, WoS y Scopus
   # , "coping strategy"
 )
+
+adaptation_oa_en <- c("adaptation", "adaptive", "adapting", "adapt")
 
 urban_en <- c(
   "built environment",
@@ -126,6 +122,8 @@ climate_es <- c(
 adaptation_es <- c(
   "adapt*"
 )
+
+adaptation_oa_es <- c("adaptación", "adaptativo", "adaptarse", "adaptar")
 
 urban_es <- c(
   "ambiente construido",
@@ -153,6 +151,8 @@ adaptation_pt <- c(
   "adapt*"
 )
 
+adaptation_oa_pt <- c("adaptação", "adaptativo", "adaptar")
+
 urban_pt <- c(
   "ambiente construído",
   "biodiversidade",
@@ -167,27 +167,26 @@ urban_pt <- c(
 )
 
 # ── Consultas OpenAlex ────────────────────────────────────────────────────────
-# Países NO van aquí — se pasan como filtro ISO en 01_retrieve_openalex.R
-# mediante authorships.countries = oa_countries_iso
+# Países NO van aquí — se pasan aparte en 01_retrieve_openalex.R para no hacer
+# que la URL de la llamada sea tan larga (tiene límite de caracteres)
 
 oa_queries <- list(
   english = and_query(
     concept_block(climate_en),
-    concept_block(adaptation_en),
+    concept_block(adaptation_oa_en),
     concept_block(urban_en)
   ),
   spanish = and_query(
     concept_block(climate_es),
-    concept_block(adaptation_es),
+    concept_block(adaptation_oa_es),
     concept_block(urban_es)
   ),
   portuguese = and_query(
     concept_block(climate_pt),
-    concept_block(adaptation_pt),
+    concept_block(adaptation_oa_pt),
     concept_block(urban_pt)
   )
 )
-
 # ── Consultas WoS ─────────────────────────────────────────────────────────────
 # TS= busca en título + resumen + palabras clave
 # Países van dentro de TS= como bloque OR de nombres completos
