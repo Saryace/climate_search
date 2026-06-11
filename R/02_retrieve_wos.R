@@ -38,48 +38,26 @@ library(glue)
 
 source("R/queries.R")
 
-# Configuración años  -----------------------------------------------------
+# Configuración -----------------------------------------------------------
 
-YEAR_FROM <- 2021L
-YEAR_TO   <- 2025L
 OUT_FILE  <- "data/raw/wos_raw.csv"
 MAX_LIMIT <- 1000L
-
-# API de WOS --------------------------------------------------------------
-
-cli_h1("WOS API")
-
-WOS_API_KEY <- Sys.getenv("WOS_STARTER_KEY")
-if (nchar(WOS_API_KEY) == 0) {
-  stop(
-    "WOS_STARTER_KEY no está en ~/.Renviron.\n"
-  )
-}
-
 
 # Llamada WOS -------------------------------------------------------------
 
 fetch_wos <- function(query, lang_label) {
-  cli_h2("Idioma {lang_label}")
-  cli_alert_info("Query (truncated): {substr(query, 1, 120)}...")
-  
-  tryCatch({
+
     total <- wos_search(query)
     cli_alert_info("Total: {total}")
     
     if (is.na(total) || total == 0) {
-      cli_alert_warning("Sin resultados")
       return(tibble())
     }
     
     if (total > MAX_LIMIT) {
-      cli_alert_warning(
-        "{total} Llegando al máximo {MAX_LIMIT}"
-      )
     }
     
     records <- wos_get_records(query, limit = min(total, MAX_LIMIT))
-    cli_alert_success("{nrow(records)} trabajos encontrados.")
     
     records |>
       transmute(
@@ -96,19 +74,13 @@ fetch_wos <- function(query, lang_label) {
         uid       = col_or_na(records, "ut")
       )
     
-  }, error = function(e) {
-    cli_alert_danger("Error: {e$message}")
-    tibble()
-  })
-}
+  }
 
 results_list <- imap(wos_queries, fetch_wos)
 all_raw      <- bind_rows(results_list)
 
-cli_alert_info("Total trabajos: {nrow(all_raw)}")
 
 # Eliminación duplicados --------------------------------------------------
-
 
 has_doi <- all_raw |> filter(!is.na(doi_clean) & doi_clean != "" & doi_clean != "na")
 no_doi  <- all_raw |> filter(is.na(doi_clean)  | doi_clean == "" | doi_clean == "na")
@@ -118,10 +90,5 @@ wos_dedup <- bind_rows(
   no_doi  |> distinct(uid, .keep_all = TRUE)
 )
 
-cli_alert_success(
-  "Despúes de eliminar duplicados: {nrow(wos_dedup)} ({nrow(all_raw) - nrow(wos_dedup)} eliminados)"
-)
-
-dir_create("data/raw")
 write_csv(wos_dedup, OUT_FILE)
-cli_alert_success("Se guarda en {OUT_FILE}")
+

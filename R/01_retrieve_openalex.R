@@ -1,263 +1,297 @@
 # =============================================================================
-# R/queries.R
-# Búsquedas Booleanas para OpenAlex, WoS y Scopus
+# R/01_retrieve_openalex.R
 #
-# -----------------------------------------------------------------------------
-# IDEA CENTRAL
-#   Las TRES bases usan las MISMAS listas de conceptos (definidas una sola vez
-#   abajo). La lógica es idéntica en las tres:
+# Descarga registros de OpenAlex usando UNA consulta por idioma (3 en total).
 #
-#       (clima) AND (adaptación) AND (urbano) AND (países)
+# SOLUCIÓN AL ERROR HTTP 400 "Request Line is too large"
+# ───────────────────────────────────────────────────────
+# Los nombres de países en el texto de búsqueda hacen la URL demasiado larga.
+# Solución: los países se pasan como filtro separado usando códigos ISO
+# (authorships.countries) definidos en queries.R — no van en la URL.
 #
-#   Lo único que cambia es la sintaxis que envuelve esos bloques según el motor:
-#       OpenAlex -> title_and_abstract.search   (el año va aparte, en oa_fetch)
-#       WoS      -> TS=( ... )                   + PY=(2021-2025)
-#       Scopus   -> TITLE-ABS-KEY( ... )         + PUBYEAR > 2020 AND < 2026
+# AUTENTICACIÓN
+# ─────────────
+# Agrega a ~/.Renviron (usethis::edit_r_environ()) y reinicia R:
+#   OPENALEX_EMAIL="tu@email.com"
+#   OPENALEX_API_KEY="tu_clave"
 #
-# -----------------------------------------------------------------------------
-# CÓMO EDITAR
-#   Edita solo las listas de conceptos (climate_*, adaptation_*, urban_*,
-#   countries_*). Cada coma dentro de una lista significa OR; las cuatro listas
-#   se unen con AND. Las consultas de las 3 bases se arman solas más abajo.
-#
-#   * Términos de varias palabras ("cambio climático") -> frase exacta (comillas)
-#   * Palabras sueltas (urbano) y comodines (adapt*)    -> sin comillas
-#
-# DOS DIFERENCIAS ENTRE MOTORES (importantes al comparar resultados)
-#   1) Alcance del campo: OpenAlex busca solo en título + resumen; WoS (TS=) y
-#      Scopus (TITLE-ABS-KEY) además incluyen palabras clave -> pueden traer algo
-#      más.
-#   2) Comodín adapt*: en WoS y Scopus el "*" trunca (adapt, adaptation,
-#      adaptación, adaptive...). OpenAlex NO trunca con "*": aplica lematización
-#      sobre la raíz. En la práctica recuperan lo mismo, pero pueden diferir un
-#      poco. Si quieres comportamiento idéntico, reemplaza "adapt*" por variantes
-#      explícitas en cada idioma.
+# Salida:   data/raw/openalex_raw.csv
+# Requiere: openalexR, dplyr, readr, fs
 # =============================================================================
 
+library(openalexR)
+library(dplyr)
+library(readr)
+library(fs)
 
-# ── Funciones auxiliares ──────────────────────────────────────────────────────
+source("R/queries.R")   # carga: oa_queries, oa_countries_iso, YEAR_FROM, YEAR_TO
 
-# Une un vector de términos en "A OR B OR C" (por defecto entre comillas).
-or_string <- function(terms, quote = TRUE) {
-  if (quote) terms <- paste0('"', terms, '"')
-  paste(terms, collapse = " OR ")
+# ── Configuración ─────────────────────────────────────────────────────────────
+
+MY_EMAIL  <- Sys.getenv("OPENALEX_EMAIL")
+MY_APIKEY <- Sys.getenv("OPENALEX_API_KEY")
+
+options(openalexR.mailto = MY_EMAIL)
+
+OUT_FILE  <- "data/raw/openalex_raw.csv"
+PAUSA_SEG <- 2L    # segundos entre fragmentos; aumenta a 5 si persiste el 429
+
+FIELDS <- c(
+  "id", "doi", "title", "display_name", "publication_year",
+  "publication_date", "type", "language",
+  "primary_location", "authorships", "abstract_inverted_index",
+  "cited_by_count"
+)
+
+# ── Función auxiliar: reintentar N veces ante errores ─────────────────────────
+
+intentar <- function(expr, intentos = 3) {
+  for (i in seq_len(intentos)) {
+    resultado <- tryCatch(expr, error = function(e) {
+      message("  Error (intento ", i, "/", intentos, "): ", conditionMessage(e))
+      message("  Esperando ", PAUSA_SEG, " seg antes de reintentar ...")
+      Sys.sleep(PAUSA_SEG)
+      NULL
+    })
+    if (!is.null(resultado)) return(resultado)
+  }
+  message("  Fallaron todos los intentos. Se omite este fragmento.")
+  NULL
 }
 
-# Convierte UNA lista de conceptos en un grupo entre paréntesis: (a OR b ...).
-# Los términos de varias palabras van entre comillas (frase exacta); las
-# palabras sueltas y los comodines quedan sin comillas.
-concept_block <- function(terms) {
-  quoted <- ifelse(grepl(" ", terms), paste0('"', terms, '"'), terms)
-  paste0("(", paste(quoted, collapse = " OR "), ")")
+# ── Función: descargar un año de una consulta ─────────────────────────────────
+
+fetch_anio <- function(query, anio, lang) {
+  message("    descargando año ", anio, " ...")
+  Sys.sleep(PAUSA_SEG)
+  resultado <- intentar(
+    oa_fetch(
+      entity                    = "works",
+      title_and_abstract.search = query,
+      authorships.countries     = oa_countries_iso,   # ISO desde queries.R
+      publication_year          = anio,
+      options                   = list(select = FIELDS),
+      mailto                    = MY_EMAIL,
+      api_key                   = MY_APIKEY,
+      verbose                   = FALSE
+    )
+  )
+  if (is.null(resultado)) return(tibble())
+  resultado |> mutate(query_language = lang, source_db = "OpenAlex")
 }
 
-# Une varios bloques de conceptos con AND.
-all_of <- function(...) paste(c(...), collapse = " AND ")
+# ── Función: descargar un idioma completo (dividido por año) ──────────────────
 
-# "x o por defecto y": devuelve x salvo que sea NULL o de largo 0.
-# (Lo usan 01/02/03 al leer campos que a veces no vienen.)
+fetch_lang <- function(lang) {
+  message("\nIdioma: ", lang)
+  lapply(YEAR_FROM:YEAR_TO, fetch_anio, query = oa_queries[[lang]], lang = lang) |>
+    bind_rows()
+}
+
+# ── Descarga ──────────────────────────────────────────────────────────────────
+
+all_raw <- lapply(names(oa_queries), fetch_lang) |>
+  bind_rows()
+
+message("\nRegistros brutos descargados: ", nrow(all_raw))
+
+# ── Normalizar DOI ────────────────────────────────────────────────────────────
+
+all_raw <- all_raw |>
+  mutate(doi_clean = tolower(trimws(coalesce(doi, NA_character_))))
+
+# ── Deduplicar ────────────────────────────────────────────────────────────────
+
+has_doi <- all_raw |> filter(!is.na(doi_clean) & doi_clean != "")
+no_doi  <- all_raw |> filter(is.na(doi_clean)  | doi_clean == "")
+
+all_dedup <- bind_rows(
+  has_doi |> arrange(doi_clean) |> distinct(doi_clean, .keep_all = TRUE),
+  no_doi  |>
+    mutate(title_norm = tolower(trimws(coalesce(display_name, "")))) |>
+    distinct(title_norm, .keep_all = TRUE) |>
+    select(-title_norm)
+)
+
+message("Tras deduplicación: ", nrow(all_dedup),
+        " registros (", nrow(all_raw) - nrow(all_dedup), " eliminados)")
+
+# ── Guardar ───────────────────────────────────────────────────────────────────
+
+dir_create("data/raw")
+write_csv(all_dedup, OUT_FILE)
+message("Guardado en ", OUT_FILE)
+
+cat > /home/claude/climate_search/R/01_retrieve_openalex.R << 'REOF'
+# =============================================================================
+# R/01_retrieve_openalex.R
+#
+# Descarga registros de OpenAlex usando httr2 directamente (POST).
+#
+# POR QUÉ httr2 EN VEZ DE oa_fetch()
+# ────────────────────────────────────
+# oa_fetch() siempre construye peticiones GET. Con consultas largas la URL
+# supera el límite del servidor (~2000 chars) → HTTP 400.
+# Con httr2 enviamos la consulta como POST con body JSON → sin límite de tamaño.
+#
+# AUTENTICACIÓN
+# ─────────────
+# Agrega a ~/.Renviron y reinicia R:
+#   OPENALEX_EMAIL="tu@email.com"
+#   OPENALEX_API_KEY="tu_clave"
+#
+# Salida:   data/raw/openalex_raw.csv
+# Requiere: httr2, jsonlite, dplyr, readr, fs
+# =============================================================================
+
+library(httr2)
+library(jsonlite)
+library(dplyr)
+library(readr)
+library(fs)
+
+source("R/queries.R")
+
+# ── Configuración ─────────────────────────────────────────────────────────────
+
+MY_EMAIL  <- Sys.getenv("OPENALEX_EMAIL")
+MY_APIKEY <- Sys.getenv("OPENALEX_API_KEY")
+
+OUT_FILE  <- "data/raw/openalex_raw.csv"
+PAUSA_SEG <- 2L
+POR_PAGINA <- 200L   # máximo permitido por OpenAlex
+
+FIELDS <- paste(c(
+  "id", "doi", "title", "display_name", "publication_year",
+  "publication_date", "type", "language",
+  "primary_location", "authorships", "abstract_inverted_index",
+  "cited_by_count"
+), collapse = ",")
+
+# ── Función: una página via GET con filtros en query string ───────────────────
+# Los filtros de país y año son cortos — solo la búsqueda de texto es larga.
+# Separamos: texto en el body (POST simulado via cursor) y filtros cortos en URL.
+
+fetch_pagina <- function(query_texto, anio, cursor = "*") {
+  
+  # Construir el filtro: texto de búsqueda + país ISO + año
+  paises <- paste(oa_countries_iso, collapse = "|")
+  
+  filtro <- paste0(
+    "title_and_abstract.search:", query_texto,
+    ",authorships.countries:", paises,
+    ",publication_year:", anio
+  )
+  
+  resp <- request("https://api.openalex.org/works") |>
+    req_url_query(
+      filter     = filtro,
+      select     = FIELDS,
+      per_page   = POR_PAGINA,
+      cursor     = cursor,
+      mailto     = MY_EMAIL,
+      api_key    = if (nchar(MY_APIKEY) > 0) MY_APIKEY else NULL
+    ) |>
+    req_timeout(60) |>
+    req_retry(max_tries = 3, backoff = ~ PAUSA_SEG) |>
+    req_perform()
+  
+  resp_body_json(resp, simplifyVector = FALSE)
+}
+
+# ── Función: todos los registros de un año ────────────────────────────────────
+
+fetch_anio <- function(query, anio, lang) {
+  message("    año ", anio, " ...")
+  Sys.sleep(PAUSA_SEG)
+  
+  # Primera página
+  pagina <- tryCatch(
+    fetch_pagina(query, anio, cursor = "*"),
+    error = function(e) {
+      message("  Error año ", anio, ": ", conditionMessage(e))
+      NULL
+    }
+  )
+  if (is.null(pagina)) return(tibble())
+  
+  total <- pagina$meta$count %||% 0L
+  message("      total: ", total)
+  if (total == 0L) return(tibble())
+  
+  registros <- pagina$results
+  cursor_sig <- pagina$meta$next_cursor
+  
+  # Páginas siguientes
+  while (!is.null(cursor_sig) && length(registros) < total) {
+    Sys.sleep(PAUSA_SEG)
+    pagina <- tryCatch(
+      fetch_pagina(query, anio, cursor = cursor_sig),
+      error = function(e) {
+        message("  Error paginando: ", conditionMessage(e))
+        NULL
+      }
+    )
+    if (is.null(pagina)) break
+    registros <- c(registros, pagina$results)
+    cursor_sig <- pagina$meta$next_cursor
+  }
+  
+  # Convertir lista a tibble
+  tibble(
+    source_db      = "OpenAlex",
+    query_language = lang,
+    id             = map_chr(registros, \(r) r$id          %||% NA_character_),
+    doi            = map_chr(registros, \(r) r$doi         %||% NA_character_),
+    display_name   = map_chr(registros, \(r) r$display_name %||% NA_character_),
+    year           = map_int(registros, \(r) r$publication_year %||% NA_integer_),
+    type           = map_chr(registros, \(r) r$type        %||% NA_character_),
+    language       = map_chr(registros, \(r) r$language    %||% NA_character_),
+    cited_by_count = map_int(registros, \(r) r$cited_by_count %||% NA_integer_)
+  )
+}
+
 `%||%` <- function(x, y) if (is.null(x) || length(x) == 0) y else x
 
-# Devuelve la columna 'name' si existe en df; si no, un marcador NA.
-# Mantiene robustos los transmute() frente a campos que la API no devuelve.
-col_or_na <- function(df, name, na = NA_character_) {
-  if (name %in% names(df)) df[[name]] else na
+# ── Función: todos los años de un idioma ──────────────────────────────────────
+
+fetch_lang <- function(lang) {
+  message("\nIdioma: ", lang)
+  lapply(YEAR_FROM:YEAR_TO, fetch_anio,
+         query = oa_queries[[lang]], lang = lang) |>
+    bind_rows()
 }
 
+# ── Descarga ──────────────────────────────────────────────────────────────────
 
-# ── Años ──────────────────────────────────────────────────────────────────────
-# Ventana temporal de la búsqueda (inclusiva). Definirla acá evita que las
-# consultas de WoS/Scopus fallen al cargar queries.R por
-# "object 'YEAR_FROM' not found".
-YEAR_FROM <- 2021L
-YEAR_TO   <- 2025L
+all_raw <- lapply(names(oa_queries), fetch_lang) |>
+  bind_rows()
 
+message("\nRegistros brutos: ", nrow(all_raw))
 
-# ── Países ──────────────────────────────────────────────────────────────────
-# Países en español/inglés/portugués, con y sin acento.
-countries_en <- c(
-  "Argentina", "Bolivia", "Brazil", "Brasil", "Chile", "Colombia",
-  "Ecuador", "Guyana", "Paraguay", "Peru", "Suriname", "Uruguay",
-  "Venezuela", "Belize", "Costa Rica", "El Salvador", "Guatemala",
-  "Honduras", "Mexico", "México", "Nicaragua", "Panama", "Panamá"
-)
-countries_es <- c(
-  "Argentina", "Bolivia", "Brasil", "Chile", "Colombia", "Ecuador",
-  "Guyana", "Paraguay", "Perú", "Suriname", "Uruguay", "Venezuela",
-  "Belice", "Costa Rica", "El Salvador", "Guatemala", "Honduras",
-  "México", "Nicaragua", "Panamá"
-)
-countries_pt <- c(
-  "Argentina", "Bolívia", "Bolivia", "Brasil", "Chile", "Colômbia",
-  "Colombia", "Equador", "Ecuador", "Guiana", "Guyana", "Paraguai",
-  "Paraguay", "Peru", "Suriname", "Uruguai", "Uruguay", "Venezuela",
-  "Belize", "Costa Rica", "El Salvador", "Guatemala", "Honduras",
-  "México", "Nicarágua", "Nicaragua", "Panamá"
+# ── Normalizar DOI ────────────────────────────────────────────────────────────
+
+all_raw <- all_raw |>
+  mutate(doi_clean = tolower(trimws(coalesce(doi, NA_character_))))
+
+# ── Deduplicar ────────────────────────────────────────────────────────────────
+
+has_doi <- all_raw |> filter(!is.na(doi_clean) & doi_clean != "")
+no_doi  <- all_raw |> filter(is.na(doi_clean)  | doi_clean == "")
+
+all_dedup <- bind_rows(
+  has_doi |> arrange(doi_clean) |> distinct(doi_clean, .keep_all = TRUE),
+  no_doi  |>
+    mutate(title_norm = tolower(trimws(coalesce(display_name, "")))) |>
+    distinct(title_norm, .keep_all = TRUE) |>
+    select(-title_norm)
 )
 
+message("Tras deduplicación: ", nrow(all_dedup),
+        " (", nrow(all_raw) - nrow(all_dedup), " eliminados)")
 
-# ── Lista de conceptos: INGLÉS ──────────────────────────────────────────────────
-climate_en <- c(
-  "climate change",
-  "global change",
-  "climate emergency",
-  "climate crisis",
-  "global warming"
-)
+# ── Guardar ───────────────────────────────────────────────────────────────────
 
-adaptation_en <- c(
-  "adapt*"               # adapt, adapts, adaptation, adaptive (ver nota del encabezado)
-  # , "resilience"       # <- ejemplo: agrega más términos de adaptación aquí
-  # , "coping strategy"
-)
-
-urban_en <- c(
-  "built environment",
-  "biodiversity",
-  "urban",
-  "city",
-  "cities",
-  "smart city",
-  "urban planning",
-  "urban resilience",
-  "urban heat",
-  "land use",
-  "disaster",
-  "early warning system"
-)
-
-
-# ── Lista de conceptos: ESPAÑOL ─────────────────────────────────────────────────
-climate_es <- c(
-  "cambio climático",
-  "cambio global",
-  "emergencia climática",
-  "crisis climática",
-  "calentamiento global"
-)
-
-adaptation_es <- c(
-  "adapt*"               # adaptar, adaptación, adaptativo, ...
-)
-
-urban_es <- c(
-  "ambiente construido",
-  "entorno construido",
-  "biodiversidad",
-  "urbano",
-  "ciudad",
-  "ciudad inteligente",
-  "planificación urbana",
-  "resiliencia urbana",
-  "calor urbano",
-  "uso del suelo",
-  "desastre",
-  "alerta temprana"
-)
-
-
-# ── Lista de conceptos: PORTUGUÉS ───────────────────────────────────────────────
-climate_pt <- c(
-  "mudança climática",
-  "alteração climática",
-  "mudança global",
-  "emergência climática",
-  "crise climática",
-  "aquecimento global"
-)
-
-adaptation_pt <- c(
-  "adapt*"               # adaptar, adaptação, adaptativo, ...
-)
-
-urban_pt <- c(
-  "ambiente construído",
-  "biodiversidade",
-  "urbano",
-  "cidade",
-  "cidades",
-  "cidade inteligente",
-  "planejamento urbano",
-  "planeamento urbano",
-  "resiliência urbana",
-  "calor urbano",
-  "uso do solo",
-  "uso da terra",
-  "desastre",
-  "alerta precoce",
-  "alerta antecipada"
-)
-
-
-# ── Consulta Booleana: OpenAlex ─────────────────────────────────────────────────
-# (clima) AND (adaptación) AND (urbano) AND (países).
-# El año NO va en esta cadena: se pasa como filtro en oa_fetch() (ver 01).
-oa_queries <- list(
-  english = all_of(
-    concept_block(climate_en),
-    concept_block(adaptation_en),
-    concept_block(urban_en),
-    paste0("(", or_string(countries_en), ")")   # países siempre entre comillas
-  ),
-  spanish = all_of(
-    concept_block(climate_es),
-    concept_block(adaptation_es),
-    concept_block(urban_es),
-    paste0("(", or_string(countries_es), ")")
-  ),
-  portuguese = all_of(
-    concept_block(climate_pt),
-    concept_block(adaptation_pt),
-    concept_block(urban_pt),
-    paste0("(", or_string(countries_pt), ")")
-  )
-)
-
-
-# ── Consulta Booleana: Web of Science ───────────────────────────────────────────
-# Cada bloque va dentro de su propio TS=( ). En WoS la precedencia es
-# NEAR > SAME > NOT > AND > OR, por eso cada bloque conceptual va entre paréntesis.
-build_wos_query <- function(climate_terms, adaptation_terms, urban_terms, country_terms) {
-  glue::glue(
-    "TS=({concept_block(climate_terms)}) ",
-    "AND TS=({concept_block(adaptation_terms)}) ",
-    "AND TS=({concept_block(urban_terms)}) ",
-    "AND TS=({paste0('(', or_string(country_terms), ')')}) ",
-    "AND PY=({YEAR_FROM}-{YEAR_TO})"
-  )
-}
-
-wos_queries <- list(
-  english    = build_wos_query(climate_en, adaptation_en, urban_en, countries_en),
-  spanish    = build_wos_query(climate_es, adaptation_es, urban_es, countries_es),
-  portuguese = build_wos_query(climate_pt, adaptation_pt, urban_pt, countries_pt)
-)
-
-
-# ── Consulta Booleana: Scopus ───────────────────────────────────────────────────
-# TITLE-ABS-KEY equivale al alcance de TS= en WoS (título + resumen + keywords).
-# Usa field = "TITLE-ABS" si quieres excluir las palabras clave.
-# PUBYEAR usa > y < estrictos (no existe >=): por eso YEAR_FROM-1 y YEAR_TO+1
-# dan el rango inclusivo 2021–2025.
-build_scopus_query <- function(climate_terms, adaptation_terms, urban_terms, country_terms,
-                               field = "TITLE-ABS-KEY") {
-  glue::glue(
-    "{field}({concept_block(climate_terms)}) ",
-    "AND {field}({concept_block(adaptation_terms)}) ",
-    "AND {field}({concept_block(urban_terms)}) ",
-    "AND {field}({paste0('(', or_string(country_terms), ')')}) ",
-    "AND PUBYEAR > {YEAR_FROM - 1L} AND PUBYEAR < {YEAR_TO + 1L}"
-  )
-}
-
-scopus_queries <- list(
-  english    = build_scopus_query(climate_en, adaptation_en, urban_en, countries_en),
-  spanish    = build_scopus_query(climate_es, adaptation_es, urban_es, countries_es),
-  portuguese = build_scopus_query(climate_pt, adaptation_pt, urban_pt, countries_pt)
-)
-
-
-# Verificación rápida — descomenta para imprimir una consulta en consola:
-# cat(oa_queries$english,     "\n")
-# cat(wos_queries$english,    "\n")
-# cat(scopus_queries$english, "\n")
+dir_create("data/raw")
+write_csv(all_dedup, OUT_FILE)
+message("Guardado en ", OUT_FILE)

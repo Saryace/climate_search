@@ -10,82 +10,71 @@
 #       (clima) AND (adaptación) AND (urbano) AND (países)
 #
 #   Lo único que cambia es la sintaxis que envuelve esos bloques según el motor:
-#       OpenAlex -> title_and_abstract.search   (el año va aparte, en oa_fetch)
+#       OpenAlex -> title_and_abstract.search   (países van como filtro ISO)
 #       WoS      -> TS=( ... )                   + PY=(2021-2025)
 #       Scopus   -> TITLE-ABS-KEY( ... )         + PUBYEAR > 2020 AND < 2026
 #
 # -----------------------------------------------------------------------------
 # CÓMO EDITAR
-#   Edita solo las listas de conceptos (climate_*, adaptation_*, urban_*,
-#   countries_*). Cada coma dentro de una lista significa OR; las cuatro listas
+#   Edita solo las listas de conceptos (climate_*, adaptation_*, urban_*).
+#   Cada elemento dentro de una lista significa OR; las cuatro listas
 #   se unen con AND. Las consultas de las 3 bases se arman solas más abajo.
 #
-#   * Términos de varias palabras ("cambio climático") -> frase exacta (comillas)
-#   * Palabras sueltas (urbano) y comodines (adapt*)    -> sin comillas
+#   * Términos de varias palabras ("cambio climático") -> frase exacta
+#   * Palabras sueltas (urbano) y comodines (adapt*)   -> sin comillas
 #
-# DOS DIFERENCIAS ENTRE MOTORES (importantes al comparar resultados)
+# DOS DIFERENCIAS ENTRE MOTORES
 #   1) Alcance del campo: OpenAlex busca solo en título + resumen; WoS (TS=) y
-#      Scopus (TITLE-ABS-KEY) además incluyen palabras clave -> pueden traer algo
-#      más.
-#   2) Comodín adapt*: en WoS y Scopus el "*" trunca (adapt, adaptation,
-#      adaptación, adaptive...). OpenAlex NO trunca con "*": aplica lematización
-#      sobre la raíz. En la práctica recuperan lo mismo, pero pueden diferir un
-#      poco. Si quieres comportamiento idéntico, reemplaza "adapt*" por variantes
-#      explícitas en cada idioma.
+#      Scopus (TITLE-ABS-KEY) además incluyen palabras clave.
+#   2) Comodín adapt*: en WoS y Scopus trunca normalmente. OpenAlex aplica
+#      lematización — en la práctica recuperan lo mismo.
 # =============================================================================
 
+# ── Años ──────────────────────────────────────────────────────────────────────
+
+YEAR_FROM <- 2021L
+YEAR_TO   <- 2025L
 
 # ── Funciones auxiliares ──────────────────────────────────────────────────────
 
-# Une un vector de términos en "A OR B OR C" (por defecto entre comillas).
+# Colapsa un vector de términos en un bloque OR entre paréntesis.
+# Los términos de más de una palabra se envuelven en comillas automáticamente.
+concept_block <- function(terms) {
+  terms_quoted <- ifelse(
+    grepl(" ", terms) & !grepl('^"', terms),
+    paste0('"', terms, '"'),
+    terms
+  )
+  paste0("(", paste(terms_quoted, collapse = " OR "), ")")
+}
+
+# Arma la consulta completa uniendo bloques con AND
+and_query <- function(...) {
+  paste(list(...), collapse = " AND ")
+}
+
+# Colapsa un vector en una cadena OR entre comillas (para listas de países)
 or_string <- function(terms, quote = TRUE) {
   if (quote) terms <- paste0('"', terms, '"')
   paste(terms, collapse = " OR ")
 }
 
-# Convierte UNA lista de conceptos en un grupo entre paréntesis: (a OR b ...).
-# Los términos de varias palabras van entre comillas (frase exacta); las
-# palabras sueltas y los comodines quedan sin comillas.
-concept_block <- function(terms) {
-  quoted <- ifelse(grepl(" ", terms), paste0('"', terms, '"'), terms)
-  paste0("(", paste(quoted, collapse = " OR "), ")")
-}
+# ── Países ────────────────────────────────────────────────────────────────────
 
-# Une varios bloques de conceptos con AND.
-all_of <- function(...) paste(c(...), collapse = " AND ")
-
-# "x o por defecto y": devuelve x salvo que sea NULL o de largo 0.
-# (Lo usan 01/02/03 al leer campos que a veces no vienen.)
-`%||%` <- function(x, y) if (is.null(x) || length(x) == 0) y else x
-
-# Devuelve la columna 'name' si existe en df; si no, un marcador NA.
-# Mantiene robustos los transmute() frente a campos que la API no devuelve.
-col_or_na <- function(df, name, na = NA_character_) {
-  if (name %in% names(df)) df[[name]] else na
-}
-
-
-# ── Años ──────────────────────────────────────────────────────────────────────
-# Ventana temporal de la búsqueda (inclusiva)
-
-YEAR_FROM <- 2021L
-YEAR_TO   <- 2025L
-
-
-# ── Países ──────────────────────────────────────────────────────────────────
-# Países en español/inglés/portugués, con y sin acento.
 countries_en <- c(
   "Argentina", "Bolivia", "Brazil", "Brasil", "Chile", "Colombia",
   "Ecuador", "Guyana", "Paraguay", "Peru", "Suriname", "Uruguay",
   "Venezuela", "Belize", "Costa Rica", "El Salvador", "Guatemala",
   "Honduras", "Mexico", "México", "Nicaragua", "Panama", "Panamá"
 )
+
 countries_es <- c(
   "Argentina", "Bolivia", "Brasil", "Chile", "Colombia", "Ecuador",
   "Guyana", "Paraguay", "Perú", "Suriname", "Uruguay", "Venezuela",
   "Belice", "Costa Rica", "El Salvador", "Guatemala", "Honduras",
   "México", "Nicaragua", "Panamá"
 )
+
 countries_pt <- c(
   "Argentina", "Bolívia", "Bolivia", "Brasil", "Chile", "Colômbia",
   "Colombia", "Equador", "Ecuador", "Guiana", "Guyana", "Paraguai",
@@ -94,165 +83,168 @@ countries_pt <- c(
   "México", "Nicarágua", "Nicaragua", "Panamá"
 )
 
+# Códigos ISO para OpenAlex (filtro authorships.countries — no va en la URL)
+oa_countries_iso <- c(
+  "AR", "BO", "BR", "CL", "CO", "EC", "GY", "PY", "PE",
+  "SR", "UY", "VE", "BZ", "CR", "SV", "GT", "HN", "MX", "NI", "PA"
+)
 
-# ── Lista de conceptos: INGLÉS ──────────────────────────────────────────────────
+# ── Listas de conceptos: INGLÉS ───────────────────────────────────────────────
+
 climate_en <- c(
   "climate change",
   "global change",
-  "climate emergency",
   "climate crisis",
   "global warming"
 )
 
 adaptation_en <- c(
-  "adapt*"               # adapt, adapts, adaptation, adaptive (ver nota del encabezado)
-  # , "resilience"       # <- ejemplo: agrega más términos de adaptación aquí
+  "adapt*"
+  # , "resilience"        # <- agrega más términos aquí si es necesario
   # , "coping strategy"
 )
 
 urban_en <- c(
   "built environment",
   "biodiversity",
-  "urban",
-  "city",
-  "cities",
   "smart city",
   "urban planning",
   "urban resilience",
-  "urban heat",
-  "land use",
   "disaster",
   "early warning system"
 )
 
+# ── Listas de conceptos: ESPAÑOL ─────────────────────────────────────────────
 
-# ── Lista de conceptos: ESPAÑOL ─────────────────────────────────────────────────
 climate_es <- c(
   "cambio climático",
   "cambio global",
-  "emergencia climática",
   "crisis climática",
   "calentamiento global"
 )
 
 adaptation_es <- c(
-  "adapt*"               # adaptar, adaptación, adaptativo, ...
+  "adapt*"
 )
 
 urban_es <- c(
   "ambiente construido",
   "entorno construido",
   "biodiversidad",
-  "urbano",
-  "ciudad",
   "ciudad inteligente",
   "planificación urbana",
   "resiliencia urbana",
   "calor urbano",
-  "uso del suelo",
   "desastre",
   "alerta temprana"
 )
 
+# ── Listas de conceptos: PORTUGUÉS ───────────────────────────────────────────
 
-# ── Lista de conceptos: PORTUGUÉS ───────────────────────────────────────────────
 climate_pt <- c(
   "mudança climática",
   "alteração climática",
   "mudança global",
-  "emergência climática",
   "crise climática",
   "aquecimento global"
 )
 
 adaptation_pt <- c(
-  "adapt*"               # adaptar, adaptação, adaptativo, ...
+  "adapt*"
 )
 
 urban_pt <- c(
   "ambiente construído",
   "biodiversidade",
-  "urbano",
-  "cidade",
-  "cidades",
   "cidade inteligente",
   "planejamento urbano",
   "planeamento urbano",
   "resiliência urbana",
   "calor urbano",
-  "uso do solo",
-  "uso da terra",
   "desastre",
   "alerta precoce",
   "alerta antecipada"
 )
 
-
-# ── Consulta Booleana: OpenAlex ─────────────────────────────────────────────────
-# (clima) AND (adaptación) AND (urbano) AND (países).
-# El año NO va en esta cadena: se pasa como filtro en oa_fetch()
+# ── Consultas OpenAlex ────────────────────────────────────────────────────────
+# Países NO van aquí — se pasan como filtro ISO en 01_retrieve_openalex.R
+# mediante authorships.countries = oa_countries_iso
 
 oa_queries <- list(
-  english = all_of(
+  english = and_query(
     concept_block(climate_en),
     concept_block(adaptation_en),
-    concept_block(urban_en),
-    paste0("(", or_string(countries_en), ")")   # países siempre entre comillas
+    concept_block(urban_en)
   ),
-  spanish = all_of(
+  spanish = and_query(
     concept_block(climate_es),
     concept_block(adaptation_es),
-    concept_block(urban_es),
-    paste0("(", or_string(countries_es), ")")
+    concept_block(urban_es)
   ),
-  portuguese = all_of(
+  portuguese = and_query(
     concept_block(climate_pt),
     concept_block(adaptation_pt),
-    concept_block(urban_pt),
-    paste0("(", or_string(countries_pt), ")")
+    concept_block(urban_pt)
   )
 )
 
-
-# ── Consulta Booleana: Web of Science ───────────────────────────────────────────
-# Cada bloque va dentro de su propio TS=( ). En WoS la precedencia es
-# NEAR > SAME > NOT > AND > OR, por eso cada bloque conceptual va entre paréntesis.
-build_wos_query <- function(climate_terms, adaptation_terms, urban_terms, country_terms) {
-  glue::glue(
-    "TS=({concept_block(climate_terms)}) ",
-    "AND TS=({concept_block(adaptation_terms)}) ",
-    "AND TS=({concept_block(urban_terms)}) ",
-    "AND TS=({paste0('(', or_string(country_terms), ')')}) ",
-    "AND PY=({YEAR_FROM}-{YEAR_TO})"
-  )
-}
+# ── Consultas WoS ─────────────────────────────────────────────────────────────
+# TS= busca en título + resumen + palabras clave
+# Países van dentro de TS= como bloque OR de nombres completos
 
 wos_queries <- list(
-  english    = build_wos_query(climate_en, adaptation_en, urban_en, countries_en),
-  spanish    = build_wos_query(climate_es, adaptation_es, urban_es, countries_es),
-  portuguese = build_wos_query(climate_pt, adaptation_pt, urban_pt, countries_pt)
+  english = paste0(
+    "TS=(", and_query(
+      concept_block(climate_en),
+      concept_block(adaptation_en),
+      concept_block(urban_en),
+      paste0("(", or_string(countries_en), ")")
+    ), ") AND PY=(", YEAR_FROM, "-", YEAR_TO, ")"
+  ),
+  spanish = paste0(
+    "TS=(", and_query(
+      concept_block(climate_es),
+      concept_block(adaptation_es),
+      concept_block(urban_es),
+      paste0("(", or_string(countries_es), ")")
+    ), ") AND PY=(", YEAR_FROM, "-", YEAR_TO, ")"
+  ),
+  portuguese = paste0(
+    "TS=(", and_query(
+      concept_block(climate_pt),
+      concept_block(adaptation_pt),
+      concept_block(urban_pt),
+      paste0("(", or_string(countries_pt), ")")
+    ), ") AND PY=(", YEAR_FROM, "-", YEAR_TO, ")"
+  )
 )
 
-
-# ── Consulta Booleana: Scopus ───────────────────────────────────────────────────
-# TITLE-ABS-KEY equivale al alcance de TS= en WoS (título + resumen + keywords).
-# Usa field = "TITLE-ABS" si quieres excluir las palabras clave.
-# PUBYEAR usa > y < estrictos (no existe >=): por eso YEAR_FROM-1 y YEAR_TO+1
-# dan el rango inclusivo 2021–2025.
-build_scopus_query <- function(climate_terms, adaptation_terms, urban_terms, country_terms,
-                               field = "TITLE-ABS-KEY") {
-  glue::glue(
-    "{field}({concept_block(climate_terms)}) ",
-    "AND {field}({concept_block(adaptation_terms)}) ",
-    "AND {field}({concept_block(urban_terms)}) ",
-    "AND {field}({paste0('(', or_string(country_terms), ')')}) ",
-    "AND PUBYEAR > {YEAR_FROM - 1L} AND PUBYEAR < {YEAR_TO + 1L}"
-  )
-}
+# ── Consultas Scopus ──────────────────────────────────────────────────────────
+# TITLE-ABS-KEY busca en título + resumen + palabras clave
 
 scopus_queries <- list(
-  english    = build_scopus_query(climate_en, adaptation_en, urban_en, countries_en),
-  spanish    = build_scopus_query(climate_es, adaptation_es, urban_es, countries_es),
-  portuguese = build_scopus_query(climate_pt, adaptation_pt, urban_pt, countries_pt)
+  english = paste0(
+    "TITLE-ABS-KEY(", and_query(
+      concept_block(climate_en),
+      concept_block(adaptation_en),
+      concept_block(urban_en),
+      paste0("(", or_string(countries_en), ")")
+    ), ") AND PUBYEAR > ", YEAR_FROM - 1L, " AND PUBYEAR < ", YEAR_TO + 1L
+  ),
+  spanish = paste0(
+    "TITLE-ABS-KEY(", and_query(
+      concept_block(climate_es),
+      concept_block(adaptation_es),
+      concept_block(urban_es),
+      paste0("(", or_string(countries_es), ")")
+    ), ") AND PUBYEAR > ", YEAR_FROM - 1L, " AND PUBYEAR < ", YEAR_TO + 1L
+  ),
+  portuguese = paste0(
+    "TITLE-ABS-KEY(", and_query(
+      concept_block(climate_pt),
+      concept_block(adaptation_pt),
+      concept_block(urban_pt),
+      paste0("(", or_string(countries_pt), ")")
+    ), ") AND PUBYEAR > ", YEAR_FROM - 1L, " AND PUBYEAR < ", YEAR_TO + 1L
+  )
 )
-
