@@ -36,6 +36,7 @@ library(cli)
 library(fs)
 library(glue)
 
+source("R/funciones.R")
 source("R/queries.R")
 
 # Configuración -----------------------------------------------------------
@@ -90,5 +91,6 @@ wos_dedup <- bind_rows(
   no_doi  |> distinct(uid, .keep_all = TRUE)
 )
 
+dir_create("data/raw")
 write_csv(wos_dedup, OUT_FILE)
 

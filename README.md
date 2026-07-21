@@ -97,10 +97,18 @@ Reinicia R después de guardar.
 | `WOS_STARTER_KEY` | [developer.clarivate.com](https://developer.clarivate.com) | Gratis; ~1000 registros/consulta |
 | `Elsevier_API` | [dev.elsevier.com](https://dev.elsevier.com) | Requiere suscripción institucional; atada a la IP — usar red del campus o VPN |
 
-Y configura tu correo para OpenAlex en `R/01_retrieve_openalex.R`:
+Y agrega tu correo de OpenAlex a `~/.Renviron` (opcional pero recomendado, aumenta
+los límites de la API):
 
-```r
-options(openalexR.mailto = "tu@correo.com")
+```
+OPENALEX_EMAIL="tu@correo.com"
+OPENALEX_API_KEY="tu_clave"   # opcional
+```
+
+Puedes verificar que quedó bien configurado antes de descargar nada con:
+
+```bash
+Rscript tests/test_openalex_env.R
 ```
 
 ### 3. Ejecutar la búsqueda
