@@ -36,16 +36,16 @@ source("R/queries.R")
 
 # ── Configuración ─────────────────────────────────────────────────────────────
 
-# En .Renviron comenta o elimina la línea de la clave:
-# OPENALEX_API_KEY="tu_clave"   # <- comentar esto
-
-# En 01_retrieve_openalex.R cambia:
-MY_APIKEY <- ""   # dejar vacío
-PAUSA_SEG <- 10L  # más pausa para respetar el límite de 10 req/seg
-
-
 MY_EMAIL  <- Sys.getenv("OPENALEX_EMAIL")
-MY_APIKEY <- ""
+MY_APIKEY <- Sys.getenv("OPENALEX_API_KEY")
+
+if (nchar(MY_EMAIL) == 0) {
+  stop(
+    "OPENALEX_EMAIL no está configurado.\n",
+    "Agrega a ~/.Renviron (usethis::edit_r_environ()) y reinicia R:\n",
+    '  OPENALEX_EMAIL="tu@email.com"'
+  )
+}
 
 options(openalexR.mailto = MY_EMAIL)
 
@@ -134,6 +134,27 @@ results_list <- purrr::pmap(
 
 all_raw <- bind_rows(results_list)
 message("\nRegistros brutos descargados: ", nrow(all_raw))
+
+# ── Aplanar columnas anidadas ─────────────────────────────────────────────────
+# openalexR devuelve columnas-lista (p.ej. author, primary_location) que
+# write_csv no sabe serializar. Aplanamos 'author' a texto y descartamos
+# cualquier otra columna-lista restante para que el CSV se escriba bien.
+
+if ("author" %in% names(all_raw)) {
+  all_raw$author <- vapply(all_raw$author, function(a) {
+    if (is.null(a) || !is.data.frame(a) || !"au_display_name" %in% names(a)) {
+      return(NA_character_)
+    }
+    paste(a$au_display_name, collapse = "; ")
+  }, character(1))
+}
+
+list_cols <- names(all_raw)[vapply(all_raw, is.list, logical(1))]
+if (length(list_cols) > 0) {
+  message("Descartando columnas-lista no serializables: ",
+          paste(list_cols, collapse = ", "))
+  all_raw <- all_raw |> select(-all_of(list_cols))
+}
 
 # ── Normalizar DOI ────────────────────────────────────────────────────────────
 

@@ -23,6 +23,8 @@ library(tidyr)
 library(cli)
 library(fs)
 
+source("R/funciones.R")
+
 # ── Load ──────────────────────────────────────────────────────────────────────
 
 cli_h1("Combinación y eliminación duplicados")
@@ -59,13 +61,9 @@ harmonise <- function(df, db_name) {
     # tipo de documento
     df$doc_type <- col_or_na(df, "type")
     
-    # autores: 'author' es una columna-lista; unir los nombres con "; "
-    df$authors <- if ("author" %in% names(df)) {
-      vapply(df$author, function(a) {
-        if (is.null(a) || !"au_display_name" %in% names(a)) return(NA_character_)
-        paste(a$au_display_name, collapse = "; ")
-      }, character(1))
-    } else NA_character_
+    # autores: 01_retrieve_openalex.R ya aplana 'author' a texto ("A; B; C")
+    # antes de guardar el CSV, así que aquí llega como columna de texto plana.
+    df$authors <- col_or_na(df, "author")
     
     df <- df |>
       rename(

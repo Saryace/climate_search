@@ -14,8 +14,10 @@
 #      Elsevier_API="tu_clave_scopus"      # dev.elsevier.com (IP/VPN institucional)
 #    Reiniciar R después de guardar.
 #
-# 3. Configura el correo de OpenAlex en R/01_retrieve_openalex.R:
-#      options(openalexR.mailto = "tu@correo.com")
+# 3. Agrega tu correo de OpenAlex a ~/.Renviron (opcional pero recomendado):
+#      OPENALEX_EMAIL="tu@correo.com"
+#      OPENALEX_API_KEY="tu_clave"   # opcional, aumenta límites
+#    Reiniciar R después de guardar.
 #
 # PASOS
 # Paso 01 │ OpenAlex (openalexR, gratis, requiere email)
@@ -33,7 +35,7 @@ pasos <- list(
   list(script = "R/01_retrieve_openalex.R", etiqueta = "01 OpenAlex descarga"),
   list(script = "R/02_retrieve_wos.R",      etiqueta = "02 WoS descarga (API)"),
   list(script = "R/03_retrieve_scopus.R",   etiqueta = "03 Scopus descarga (API)"),
-  list(script = "R/04_merge_and_dupl.R",   etiqueta = "04 Unión y deduplicación")
+  list(script = "R/04_merge_and_dedup.R",  etiqueta = "04 Unión y deduplicación")
 )
 
 for (paso in pasos) {
