@@ -100,15 +100,6 @@ adaptation_en <- c(
 
 adaptation_oa_en <- c("adaptation", "adaptive", "adapting", "adapt")
 
-urban_en <- c(
-  "built environment",
-  "biodiversity",
-  "smart city",
-  "urban planning",
-  "urban resilience",
-  "disaster",
-  "early warning system"
-)
 
 # ── Listas de conceptos: ESPAÑOL ─────────────────────────────────────────────
 
@@ -125,17 +116,6 @@ adaptation_es <- c(
 
 adaptation_oa_es <- c("adaptación", "adaptativo", "adaptarse", "adaptar")
 
-urban_es <- c(
-  "ambiente construido",
-  "entorno construido",
-  "biodiversidad",
-  "ciudad inteligente",
-  "planificación urbana",
-  "resiliencia urbana",
-  "calor urbano",
-  "desastre",
-  "alerta temprana"
-)
 
 # ── Listas de conceptos: PORTUGUÉS ───────────────────────────────────────────
 
@@ -153,19 +133,6 @@ adaptation_pt <- c(
 
 adaptation_oa_pt <- c("adaptação", "adaptativo", "adaptar")
 
-urban_pt <- c(
-  "ambiente construído",
-  "biodiversidade",
-  "cidade inteligente",
-  "planejamento urbano",
-  "planeamento urbano",
-  "resiliência urbana",
-  "calor urbano",
-  "desastre",
-  "alerta precoce",
-  "alerta antecipada"
-)
-
 # ── Consultas OpenAlex ────────────────────────────────────────────────────────
 # Países NO van aquí — se pasan aparte en 01_retrieve_openalex.R para no hacer
 # que la URL de la llamada sea tan larga (tiene límite de caracteres)
@@ -173,18 +140,15 @@ urban_pt <- c(
 oa_queries <- list(
   english = and_query(
     concept_block(climate_en),
-    concept_block(adaptation_oa_en),
-    concept_block(urban_en)
+    concept_block(adaptation_oa_en)
   ),
   spanish = and_query(
     concept_block(climate_es),
-    concept_block(adaptation_oa_es),
-    concept_block(urban_es)
+    concept_block(adaptation_oa_es)
   ),
   portuguese = and_query(
     concept_block(climate_pt),
-    concept_block(adaptation_oa_pt),
-    concept_block(urban_pt)
+    concept_block(adaptation_oa_pt)
   )
 )
 # ── Consultas WoS ─────────────────────────────────────────────────────────────
@@ -196,7 +160,6 @@ wos_queries <- list(
     "TS=(", and_query(
       concept_block(climate_en),
       concept_block(adaptation_en),
-      concept_block(urban_en),
       paste0("(", or_string(countries_en), ")")
     ), ") AND PY=(", YEAR_FROM, "-", YEAR_TO, ")"
   ),
@@ -204,7 +167,6 @@ wos_queries <- list(
     "TS=(", and_query(
       concept_block(climate_es),
       concept_block(adaptation_es),
-      concept_block(urban_es),
       paste0("(", or_string(countries_es), ")")
     ), ") AND PY=(", YEAR_FROM, "-", YEAR_TO, ")"
   ),
@@ -212,7 +174,6 @@ wos_queries <- list(
     "TS=(", and_query(
       concept_block(climate_pt),
       concept_block(adaptation_pt),
-      concept_block(urban_pt),
       paste0("(", or_string(countries_pt), ")")
     ), ") AND PY=(", YEAR_FROM, "-", YEAR_TO, ")"
   )
@@ -226,7 +187,6 @@ scopus_queries <- list(
     "TITLE-ABS-KEY(", and_query(
       concept_block(climate_en),
       concept_block(adaptation_en),
-      concept_block(urban_en),
       paste0("(", or_string(countries_en), ")")
     ), ") AND PUBYEAR > ", YEAR_FROM - 1L, " AND PUBYEAR < ", YEAR_TO + 1L
   ),
@@ -234,7 +194,6 @@ scopus_queries <- list(
     "TITLE-ABS-KEY(", and_query(
       concept_block(climate_es),
       concept_block(adaptation_es),
-      concept_block(urban_es),
       paste0("(", or_string(countries_es), ")")
     ), ") AND PUBYEAR > ", YEAR_FROM - 1L, " AND PUBYEAR < ", YEAR_TO + 1L
   ),
@@ -242,7 +201,6 @@ scopus_queries <- list(
     "TITLE-ABS-KEY(", and_query(
       concept_block(climate_pt),
       concept_block(adaptation_pt),
-      concept_block(urban_pt),
       paste0("(", or_string(countries_pt), ")")
     ), ") AND PUBYEAR > ", YEAR_FROM - 1L, " AND PUBYEAR < ", YEAR_TO + 1L
   )
